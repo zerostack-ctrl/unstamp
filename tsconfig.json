@@ -1,0 +1,7 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/unstamp" },
+    { "path": "./packages/adapter-node" }
+  ]
+}

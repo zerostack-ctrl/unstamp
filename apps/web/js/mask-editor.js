@@ -9,6 +9,7 @@ export class MaskEditor {
     this.redoStack = [];
     this.drawing = false;
     this.mask = null;
+    this.enabled = false;
   }
 
   reset(W, H) {
@@ -17,36 +18,47 @@ export class MaskEditor {
     this.mask = new Float32Array(W * H);
     this.undoStack = [];
     this.redoStack = [];
+    this.enabled = true;
     this.render();
   }
 
+  disable() {
+    this.enabled = false;
+    this.mask = null;
+    // Clear the overlay
+    this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+  }
+
   pushUndo() {
+    if (!this.mask) return;
     this.undoStack.push(new Float32Array(this.mask));
     if (this.undoStack.length > 30) this.undoStack.shift();
     this.redoStack = [];
   }
 
   undo() {
-    if (!this.undoStack.length) return;
+    if (!this.mask || !this.undoStack.length) return;
     this.redoStack.push(new Float32Array(this.mask));
     this.mask = this.undoStack.pop();
     this.render();
   }
 
   redo() {
-    if (!this.redoStack.length) return;
+    if (!this.mask || !this.redoStack.length) return;
     this.undoStack.push(new Float32Array(this.mask));
     this.mask = this.redoStack.pop();
     this.render();
   }
 
   clear() {
+    if (!this.mask) return;
     this.pushUndo();
     this.mask.fill(0);
     this.render();
   }
 
   loadMaskFromHit(hit) {
+    if (!this.mask) return;
     this.pushUndo();
     const { x, y, width, height, angle } = hit;
     const W = this.overlay.width;
@@ -76,6 +88,7 @@ export class MaskEditor {
   }
 
   paint(x, y, radius, value) {
+    if (!this.mask) return;                  // ← the fix
     const W = this.overlay.width;
     const H = this.overlay.height;
     const r2 = radius * radius;
@@ -94,6 +107,7 @@ export class MaskEditor {
   }
 
   render() {
+    if (!this.mask) return;                  // ← the fix
     const W = this.overlay.width;
     const H = this.overlay.height;
     const img = this.ctx.createImageData(W, H);
@@ -107,7 +121,9 @@ export class MaskEditor {
     this.ctx.putImageData(img, 0, 0);
   }
 
-  toMask() { return this.mask; }
+  toMask() {
+    return this.mask;
+  }
 
   bind() {
     const pt = (e) => {
@@ -116,8 +132,12 @@ export class MaskEditor {
       const y = (e.clientY - r.top) * (this.overlay.height / r.height);
       return [Math.round(x), Math.round(y)];
     };
-    this.overlay.style.pointerEvents = 'auto';
+
+    // Only paint when we have a real mask and the editor is enabled
+    const guard = () => this.enabled && this.mask != null;
+
     this.overlay.addEventListener('pointerdown', (e) => {
+      if (!guard()) return;
       this.drawing = true;
       this.pushUndo();
       const [x, y] = pt(e);
@@ -125,13 +145,15 @@ export class MaskEditor {
       this.paint(x, y, this.brushSize / 2, v);
       this.render();
     });
+
     this.overlay.addEventListener('pointermove', (e) => {
-      if (!this.drawing) return;
+      if (!guard() || !this.drawing) return;
       const [x, y] = pt(e);
       const v = this.tool === 'eraser' ? 0 : 1;
       this.paint(x, y, this.brushSize / 2, v);
       this.render();
     });
+
     window.addEventListener('pointerup', () => { this.drawing = false; });
   }
 }

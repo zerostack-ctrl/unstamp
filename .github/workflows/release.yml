@@ -7,7 +7,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      id-token: write    # ← REQUIRED for OIDC
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -24,4 +24,3 @@ jobs:
           publish: pnpm release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No NPM_TOKEN needed — OIDC handles auth

@@ -1,6 +1,6 @@
 {
   "name": "@zerostack-labc/unstamp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Type-safe watermark detection & removal. Browser + Node.",
   "type": "module",
   "license": "MIT",
@@ -28,7 +28,10 @@
       "import": "./dist/presets.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -b",
     "bench": "node bench/index.js"
@@ -37,11 +40,23 @@
     "onnxruntime-web": ">=1.18.0"
   },
   "peerDependenciesMeta": {
-    "onnxruntime-web": { "optional": true },
-    "onnxruntime-node": { "optional": true }
+    "onnxruntime-web": {
+      "optional": true
+    },
+    "onnxruntime-node": {
+      "optional": true
+    }
   },
   "keywords": [
-    "watermark", "inpaint", "onnx", "image", "vision",
-    "typescript", "browser", "node", "c2pa", "exif"
+    "watermark",
+    "inpaint",
+    "onnx",
+    "image",
+    "vision",
+    "typescript",
+    "browser",
+    "node",
+    "c2pa",
+    "exif"
   ]
 }

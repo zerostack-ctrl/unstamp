@@ -1,16 +1,23 @@
 {
   "name": "@zerostack-labc/cli",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Command-line watermark remover.",
   "type": "module",
   "license": "MIT",
-  "bin": { "unstamp": "./bin/unstamp.js" },
-  "files": ["bin", "README.md"],
+  "bin": {
+    "unstamp": "./bin/unstamp.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
   "dependencies": {
     "@zerostack-labc/adapter-node": "workspace:*",
     "@zerostack-labc/unstamp": "workspace:*",
     "cac": "^6.7.14",
     "kleur": "^4.1.5"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

@@ -2,8 +2,8 @@
 import { cac } from 'cac';
 import { readdir, readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { extname, join, basename, resolve } from 'node:path';
-import { unstampFile } from '@zerostack-ctrl/adapter-node';
-import { PRESETS } from '@zerostack-ctrl/unstamp/presets';
+import { unstampFile } from '@zerostack-labc/adapter-node';
+import { PRESETS } from '@zerostack-labc/unstamp/presets';
 import kleur from 'kleur';
 
 const cli = cac('unstamp');

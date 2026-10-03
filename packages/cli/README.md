@@ -1,7 +1,7 @@
-# @zerostack-ctrl/cli
+# @zerostack-labc/cli
 
 ```bash
-npx @zerostack-ctrl/cli in.jpg --text "Gemini" --out clean/
-npx @zerostack-ctrl/cli ./raw/ --preset sora --model ensemble --concurrency 8
-npx @zerostack-ctrl/cli ./assets/*.png --preset midjourney --strip-metadata --json | jq
+npx @zerostack-labc/cli in.jpg --text "Gemini" --out clean/
+npx @zerostack-labc/cli ./raw/ --preset sora --model ensemble --concurrency 8
+npx @zerostack-labc/cli ./assets/*.png --preset midjourney --strip-metadata --json | jq
 ```

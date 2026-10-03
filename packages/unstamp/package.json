@@ -1,5 +1,5 @@
 {
-  "name": "@zerostack-ctrl/unstamp",
+  "name": "@zerostack-labc/unstamp",
   "version": "1.0.0",
   "description": "Type-safe watermark detection & removal. Browser + Node.",
   "type": "module",

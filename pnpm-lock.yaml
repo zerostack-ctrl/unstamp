@@ -26,10 +26,10 @@ importers:
 
   examples/node-basic:
     dependencies:
-      '@zerostack-ctrl/adapter-node':
+      '@zerostack-labc/adapter-node':
         specifier: workspace:*
         version: link:../../packages/adapter-node
-      '@zerostack-ctrl/unstamp':
+      '@zerostack-labc/unstamp':
         specifier: workspace:*
         version: link:../../packages/unstamp
 
@@ -38,7 +38,7 @@ importers:
       '@napi-rs/canvas':
         specifier: ^0.1.68
         version: 0.1.100
-      '@zerostack-ctrl/unstamp':
+      '@zerostack-labc/unstamp':
         specifier: workspace:*
         version: link:../unstamp
       onnxruntime-node:
@@ -50,10 +50,10 @@ importers:
 
   packages/cli:
     dependencies:
-      '@zerostack-ctrl/adapter-node':
+      '@zerostack-labc/adapter-node':
         specifier: workspace:*
         version: link:../adapter-node
-      '@zerostack-ctrl/unstamp':
+      '@zerostack-labc/unstamp':
         specifier: workspace:*
         version: link:../unstamp
       cac:

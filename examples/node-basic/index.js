@@ -1,4 +1,4 @@
-import { unstampFile } from '@zerostack-ctrl/adapter-node';
+import { unstampFile } from '@zerostack-labc/adapter-node';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const inputPath = process.argv[2] ?? 'input.jpg';

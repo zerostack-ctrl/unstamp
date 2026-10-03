@@ -1,8 +1,8 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import sharp from 'sharp';
 import * as ort from 'onnxruntime-node';
-import { detectAll, buildMask, inpaintPipeline, stripMetadataBytes } from '@zerostack-ctrl/unstamp';
-import type { UnstampOptions } from '@zerostack-ctrl/unstamp';
+import { detectAll, buildMask, inpaintPipeline, stripMetadataBytes } from '@zerostack-labc/unstamp';
+import type { UnstampOptions } from '@zerostack-labc/unstamp';
 
 export interface NodeUnstampOptions extends UnstampOptions {
   miganPath?: string;

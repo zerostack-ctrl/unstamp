@@ -1,7 +1,7 @@
 {
-  "name": "@zerostack-ctrl/adapter-node",
+  "name": "@zerostack-labc/adapter-node",
   "version": "1.0.0",
-  "description": "Node.js adapter for @zerostack-ctrl/unstamp.",
+  "description": "Node.js adapter for @zerostack-labc/unstamp.",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
@@ -12,7 +12,7 @@
   "files": ["dist", "README.md"],
   "scripts": { "build": "tsc -b" },
   "dependencies": {
-    "@zerostack-ctrl/unstamp": "workspace:*",
+    "@zerostack-labc/unstamp": "workspace:*",
     "@napi-rs/canvas": "^0.1.68",
     "onnxruntime-node": "^1.18.0",
     "sharp": "^0.33.0"

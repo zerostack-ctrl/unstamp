@@ -1,7 +1,7 @@
-# @zerostack-ctrl/adapter-node
+# @zerostack-labc/adapter-node
 
 ```ts
-import { unstampFile } from '@zerostack-ctrl/adapter-node';
+import { unstampFile } from '@zerostack-labc/adapter-node';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const out = await unstampFile(await readFile('in.jpg'), {

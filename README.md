@@ -14,9 +14,9 @@ Live demo: https://zerostack-ctrl.github.io/unstamp/
 
 
 
-&#x20;   npx @zerostack-ctrl/cli in.jpg --text "Gemini" --out clean/
+&#x20;   npx @zerostack-labc/cli in.jpg --text "Gemini" --out clean/
 
-&#x20;   npm i @zerostack-ctrl/unstamp @zerostack-ctrl/adapter-node
+&#x20;   npm i @zerostack-labc/unstamp @zerostack-labc/adapter-node
 
 
 

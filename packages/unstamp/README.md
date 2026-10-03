@@ -1,4 +1,4 @@
-\# @zerostack-ctrl/unstamp
+\# @zerostack-labc/unstamp
 
 
 
@@ -10,7 +10,7 @@ Type-safe watermark detection \& removal. Browser + Node.
 
 
 
-&#x20;   npm i @zerostack-ctrl/unstamp onnxruntime-web
+&#x20;   npm i @zerostack-labc/unstamp onnxruntime-web
 
 
 
@@ -18,7 +18,7 @@ Type-safe watermark detection \& removal. Browser + Node.
 
 
 
-&#x20;   import { unstamp } from '@zerostack-ctrl/unstamp';
+&#x20;   import { unstamp } from '@zerostack-labc/unstamp';
 
 
 

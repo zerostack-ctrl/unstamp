@@ -89,7 +89,28 @@
 
     <section class="card">
       <h2>3. Remove</h2>
-      <label for="model">Model</label>
+
+      <h3 class="section-sub">Output</h3>
+      <label for="out-format">Format</label>
+      <select id="out-format">
+        <option value="mp4">MP4 (H.264, no audio)</option>
+        <option value="webm">WebM (with audio)</option>
+      </select>
+
+      <label for="out-quality">Quality</label>
+      <select id="out-quality">
+        <option value="source">Source resolution</option>
+        <option value="1080" selected>1080p</option>
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+      </select>
+
+      <label for="trim-start">Trim <output id="trim-out">full</output></label>
+      <input id="trim-start" type="range" min="0" max="100" value="0" step="0.1" />
+      <input id="trim-end" type="range" min="0" max="100" value="100" step="0.1" />
+
+      <h3 class="section-sub">Model</h3>
+      <label for="model">Inpaint engine</label>
       <select id="model">
         <option value="auto">Auto (best)</option>
         <option value="migan">MI-GAN (fast)</option>
@@ -98,6 +119,9 @@
       </select>
       <label class="checkbox"><input id="post-denoise" type="checkbox" checked /> Denoise after</label>
       <label class="checkbox"><input id="post-sharpen" type="checkbox" checked /> Sharpen after</label>
+
+      <h3 class="section-sub">Actions</h3>
+      <button id="btnPreview" disabled>Preview clean frame</button>
       <button id="btnDetect" class="primary">Detect</button>
       <button id="btnRemove" class="primary" disabled>Remove watermark</button>
       <button id="btnDownload" disabled>Download result</button>
@@ -126,6 +150,7 @@
       <div id="suggestion" class="suggestion" hidden>
         <span class="suggestion-label">Detected:</span>
         <span id="suggestion-text" class="suggestion-text">—</span>
+        <button id="suggestion-preview" class="suggestion-preview">Preview</button>
         <button id="suggestion-accept" class="suggestion-accept">Accept</button>
         <button id="suggestion-dismiss" class="suggestion-dismiss" title="Dismiss">×</button>
       </div>

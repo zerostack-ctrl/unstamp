@@ -128,6 +128,28 @@ body.mode-manual .auto-badge{display:none}
 }
 .suggestion-dismiss:hover{background:var(--bg-3);color:var(--fg)}
 
+/* ── Section subheadings ────────────────────────────────────────────── */
+.section-sub{
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  color:var(--fg-mute);
+  margin:16px 0 6px;
+  font-weight:600;
+}
+.section-sub:first-child{margin-top:0}
+#trim-start,#trim-end{margin-top:4px}
+
+/* ── Preview button in suggestion chip ─────────────────────────────── */
+.suggestion-preview{
+  padding:6px 12px;
+  font-size:12px;
+  background:transparent;
+  border-color:var(--border);
+  color:var(--fg);
+}
+.suggestion-preview:hover{background:var(--bg-3)}
+
 /* ── Thumbs ──────────────────────────────────────────────────────────── */
 .thumbs{display:flex;gap:8px;overflow-x:auto;padding:4px}
 .thumbs .thumb{border:2px solid var(--border);border-radius:var(--radius-sm);

@@ -15,8 +15,8 @@ loadPersisted();
 // ── DOM refs ─────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 const progressEl = $('progress');
-const progressFill = progressEl.querySelector('.progress-fill');
-const progressLabel = progressEl.querySelector('.progress-label');
+const progressFill = progressEl?.querySelector('.progress-fill');
+const progressLabel = progressEl?.querySelector('.progress-label');
 const boxLayer = $('box-layer');
 const suggestionEl = $('suggestion');
 const suggestionText = $('suggestion-text');
@@ -25,32 +25,60 @@ const overlayEl = $('overlay');
 const canvasEl = $('canvas');
 const canvasWrap = document.querySelector('.canvas-wrap');
 
+// ── Null-safe DOM helpers ───────────────────────────────────────────────
+const on = (id, event, fn) => {
+  const el = $(id);
+  if (el) el.addEventListener(event, fn);
+  return el;
+};
+const setHidden = (id, hidden) => {
+  const el = $(id);
+  if (el) el.hidden = hidden;
+};
+const setDisabled = (id, disabled) => {
+  const el = $(id);
+  if (el) el.disabled = disabled;
+};
+
 // ── App state ────────────────────────────────────────────────────────────
-let mode = 'auto';                      // 'auto' | 'manual'
-let currentKind = null;                 // 'image' | 'video'
+let mode = 'auto';
+let currentKind = null;
 let currentFile = null;
 let currentImageData = null;
 let currentVideoUrl = null;
 let currentHits = [];
-let currentMask = null;                 // Float32Array
-let currentInpaintResult = null;
+let currentMask = null;
+let currentInpaintResult = null;   // ImageData — from image removal OR video preview
+let currentVideoResult = null;     // Blob — from full video processing
+let previewMode = false;
+
+// ── Reset download state on every new file ──────────────────────────────
+function resetDownloadState() {
+  currentInpaintResult = null;
+  currentVideoResult = null;
+  ui.setDownloadEnabled(false);
+}
 
 // ── Progress ─────────────────────────────────────────────────────────────
 function showProgress(phase, pct, detail = '') {
+  if (!progressEl) return;
   progressEl.hidden = false;
-  progressFill.style.width = `${(pct * 100).toFixed(1)}%`;
-  const phaseName = {
-    detect: 'Detecting',
-    mask: 'Building mask',
-    inpaint: 'Inpainting',
-    postprocess: 'Post-processing',
-    video: 'Video',
-  }[phase] || phase;
-  progressLabel.innerHTML =
-    `<span class="phase">${phaseName}</span>` +
-    `<span class="detail">${(pct * 100).toFixed(0)}% · ${detail}</span>`;
+  if (progressFill) progressFill.style.width = `${(pct * 100).toFixed(1)}%`;
+  if (progressLabel) {
+    const phaseName = {
+      detect: 'Detecting',
+      mask: 'Building mask',
+      inpaint: 'Inpainting',
+      postprocess: 'Post-processing',
+      video: 'Video',
+    }[phase] || phase;
+    progressLabel.innerHTML =
+      `<span class="phase">${phaseName}</span>` +
+      `<span class="detail">${(pct * 100).toFixed(0)}% · ${detail}</span>`;
+  }
 }
 function hideProgress() {
+  if (!progressEl) return;
   setTimeout(() => { progressEl.hidden = true; }, 800);
 }
 
@@ -81,10 +109,11 @@ const inpaintWorker = worker('js/workers/inpaint.worker.js');
 
 // ── Detection boxes overlay ─────────────────────────────────────────────
 function clearBoxes() {
-  boxLayer.innerHTML = '';
+  if (boxLayer) boxLayer.innerHTML = '';
 }
 
 function drawBoxes(hits, imageWidth, imageHeight) {
+  if (!boxLayer || !canvasWrap) return;
   clearBoxes();
   if (!hits.length) return;
 
@@ -111,39 +140,73 @@ function drawBoxes(hits, imageWidth, imageHeight) {
 }
 
 // ── Suggestion chip ─────────────────────────────────────────────────────
-function showSuggestion(hit) {
+function showSuggestion(hit, customText = null) {
+  if (!suggestionEl || !suggestionText) return;
   if (!hit) { suggestionEl.hidden = true; return; }
-  const label = hit.suggested || hit.matchedText || hit.region || 'watermark';
+  const label = customText || hit.suggested || hit.matchedText || hit.region || 'watermark';
   suggestionText.textContent = label;
   suggestionEl.hidden = false;
 }
-
 function hideSuggestion() {
-  suggestionEl.hidden = true;
+  if (suggestionEl) suggestionEl.hidden = true;
 }
 
-// ── Options reader ──────────────────────────────────────────────────────
+// ── Options ─────────────────────────────────────────────────────────────
 function readVideoOptions() {
+  const quality = $('out-quality')?.value ?? '720';
+  const bitrateMbps = +($('out-bitrate')?.value ?? 3);
   return {
-    targetHeight: (() => {
-      const v = $('out-quality').value;
-      return v === 'source' ? null : +v;
-    })(),
-    bitrate: (() => {
-      const v = $('out-quality').value;
-      return v === '1080' ? 12_000_000
-           : v === '720'  ? 8_000_000
-           : v === '480'  ? 5_000_000
-           : 12_000_000;
-    })(),
-    preferMp4: $('out-format').value === 'mp4',
+    targetHeight: quality === 'source' ? null : +quality,
+    bitrate: Math.round(bitrateMbps * 1_000_000),
+    preferMp4: ($('out-format')?.value ?? 'mp4') === 'mp4',
   };
 }
 
+function updateBitrateLabel() {
+  const out = $('bitrate-out');
+  const slider = $('out-bitrate');
+  if (!out || !slider) return;
+  const mbps = +slider.value;
+  const mbPerMin = (mbps * 60) / 8;
+  const size = mbPerMin < 1
+    ? `${(mbPerMin * 1000).toFixed(0)} KB/min`
+    : `${mbPerMin.toFixed(1)} MB/min`;
+  out.textContent = `${mbps} Mbps · ~${size}`;
+}
+
+function applyQualityPreset() {
+  const q = $('out-quality')?.value ?? '720';
+  const slider = $('out-bitrate');
+  if (!slider) return;
+  const preset = { '480': 1.5, '720': 3, '1080': 6, 'source': 8 }[q] ?? 3;
+  slider.value = preset;
+  updateBitrateLabel();
+}
+
 function readTrimRange(duration) {
-  const s = +$('trim-start').value;
-  const e = +$('trim-end').value;
+  const s = +($('trim-start')?.value ?? 0);
+  const e = +($('trim-end')?.value ?? duration);
   return { start: Math.max(0, s), end: Math.min(duration, e) };
+}
+
+function currentColour() {
+  const v = $('watermark-colour')?.value ?? 'auto';
+  if (v === 'white') return [255, 255, 255];
+  if (v === 'black') return [0, 0, 0];
+  return null;
+}
+
+function buildMaskFromHits(hits, W, H, maxHits = 5) {
+  const mask = new Float32Array(W * H);
+  for (const hit of hits.slice(0, maxHits)) {
+    const x0 = Math.max(0, Math.round(hit.x));
+    const y0 = Math.max(0, Math.round(hit.y));
+    const x1 = Math.min(W, Math.round(hit.x + hit.width));
+    const y1 = Math.min(H, Math.round(hit.y + hit.height));
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) mask[y * W + x] = 1;
+  }
+  return mask;
 }
 
 // ── Mode switch ─────────────────────────────────────────────────────────
@@ -151,13 +214,12 @@ function setMode(next) {
   mode = next;
   document.body.classList.toggle('mode-auto', next === 'auto');
   document.body.classList.toggle('mode-manual', next === 'manual');
-  $('mode-auto').classList.toggle('active', next === 'auto');
-  $('mode-manual').classList.toggle('active', next === 'manual');
-  $('mode-auto').setAttribute('aria-selected', next === 'auto');
-  $('mode-manual').setAttribute('aria-selected', next === 'manual');
-
+  $('mode-auto')?.classList.toggle('active', next === 'auto');
+  $('mode-manual')?.classList.toggle('active', next === 'manual');
+  $('mode-auto')?.setAttribute('aria-selected', next === 'auto');
+  $('mode-manual')?.setAttribute('aria-selected', next === 'manual');
   if (next === 'manual') {
-    state.watermarkText = $('watermark-text').value || state.watermarkText;
+    state.watermarkText = $('watermark-text')?.value || state.watermarkText;
   } else {
     state.watermarkText = '';
   }
@@ -183,10 +245,8 @@ function upscaleHits(hits, scale) {
   if (scale === 1) return hits;
   return hits.map((h) => ({
     ...h,
-    x: h.x / scale,
-    y: h.y / scale,
-    width: h.width / scale,
-    height: h.height / scale,
+    x: h.x / scale, y: h.y / scale,
+    width: h.width / scale, height: h.height / scale,
   }));
 }
 
@@ -200,7 +260,6 @@ async function onImage(file) {
   const bitmap = await createImageBitmap(file);
   state.setImage(bitmap);
 
-  // Show canvas, hide video
   canvasEl.style.display = '';
   videoEl.style.display = 'none';
   try { videoEl.pause(); } catch {}
@@ -214,9 +273,12 @@ async function onImage(file) {
   overlayEl.style.pointerEvents = 'auto';
 
   ui.showStage();
-  ui.setDownloadEnabled(false);
-  $('btnRemove').disabled = true;
-  $('btnPreview').disabled = true;
+  resetDownloadState();
+  setDisabled('btnRemove', true);
+  setDisabled('btnPreview', true);
+  setHidden('back-to-video', true);
+  setHidden('preview-badge', true);
+  previewMode = false;
   hideSuggestion();
   clearBoxes();
 
@@ -231,16 +293,18 @@ async function onVideo(file) {
   if (currentVideoUrl) URL.revokeObjectURL(currentVideoUrl);
   currentVideoUrl = URL.createObjectURL(file);
 
-  // Show video, hide canvas
   canvasEl.style.display = 'none';
   videoEl.style.display = '';
   maskEditor.disable();
   overlayEl.style.pointerEvents = 'none';
 
   ui.showStage();
-  ui.setDownloadEnabled(false);
-  $('btnRemove').disabled = true;
-  $('btnPreview').disabled = true;
+  resetDownloadState();
+  setDisabled('btnRemove', true);
+  setDisabled('btnPreview', true);
+  setHidden('back-to-video', true);
+  setHidden('preview-badge', true);
+  previewMode = false;
   hideSuggestion();
   clearBoxes();
 
@@ -248,16 +312,11 @@ async function onVideo(file) {
   try {
     await loadVideo(videoEl, currentVideoUrl, 30000);
 
-    // Wire trim sliders to actual duration
-    $('trim-start').min = 0;
-    $('trim-start').max = videoEl.duration;
-    $('trim-end').min = 0;
-    $('trim-end').max = videoEl.duration;
-    $('trim-start').value = 0;
-    $('trim-end').value = videoEl.duration;
-    $('trim-out').textContent = `full (${videoEl.duration.toFixed(1)}s)`;
+    const ts = $('trim-start'), te = $('trim-end'), to = $('trim-out');
+    if (ts) { ts.min = 0; ts.max = videoEl.duration; ts.value = 0; }
+    if (te) { te.min = 0; te.max = videoEl.duration; te.value = videoEl.duration; }
+    if (to) to.textContent = `full (${videoEl.duration.toFixed(1)}s)`;
 
-    // Grab a visible poster frame
     videoEl.currentTime = Math.min(1, videoEl.duration * 0.5);
     await grabFrame(videoEl);
 
@@ -270,34 +329,29 @@ async function onVideo(file) {
   }
 }
 
-// ── Unified detection ───────────────────────────────────────────────────
+// ── Detection ───────────────────────────────────────────────────────────
 async function runDetect() {
   const isVideo = currentKind === 'video';
   const isAuto = mode === 'auto';
-  const text = isAuto ? '' : ($('watermark-text').value || '').trim();
+  const text = isAuto ? '' : ($('watermark-text')?.value || '').trim();
 
   ui.busy(true);
   setAutoBadge('searching', isVideo ? 'Scanning video…' : 'Scanning image…');
   try {
     let hits = [];
-
     if (isVideo) {
       hits = await detectInVideo(videoEl, {
-        text,
-        autoDetect: isAuto,
-        onProgress: showProgress,
+        text, autoDetect: isAuto, onProgress: showProgress,
       });
     } else {
       const { imageData: small, scale } = downscaleForDetection(currentImageData, 2048);
       const hitsSmall = await detectWorker.call(
         {
-          imageData: small,
-          text,
-          autoDetect: isAuto,
-          angleAuto: $('watermark-angle-auto').checked,
-          angle: +$('watermark-angle').value,
-          tiled: $('watermark-tiled').checked,
-          outline: $('watermark-outline').checked,
+          imageData: small, text, autoDetect: isAuto,
+          angleAuto: $('watermark-angle-auto')?.checked ?? true,
+          angle: +($('watermark-angle')?.value ?? 0),
+          tiled: $('watermark-tiled')?.checked ?? false,
+          outline: $('watermark-outline')?.checked ?? false,
         },
         showProgress,
       );
@@ -311,8 +365,8 @@ async function runDetect() {
       hideSuggestion();
       clearBoxes();
       ui.renderCandidates([]);
-      $('btnRemove').disabled = true;
-      $('btnPreview').disabled = true;
+      setDisabled('btnRemove', true);
+      setDisabled('btnPreview', true);
       return;
     }
 
@@ -324,11 +378,11 @@ async function runDetect() {
     drawBoxes(hits, W, H);
     ui.renderCandidates(hits);
 
-    if (!isVideo) {
-      maskEditor.loadMaskFromHit(hits[0]);
-    }
-    $('btnRemove').disabled = false;
-    $('btnPreview').disabled = false;
+    if (!isVideo) maskEditor.loadMaskFromHit(hits[0]);
+    setDisabled('btnRemove', false);
+    setDisabled('btnPreview', false);
+    // Download stays disabled — must remove or preview first
+    ui.setDownloadEnabled(false);
   } catch (e) {
     console.error(e);
     setAutoBadge('failed', e.message || 'Detection failed');
@@ -340,36 +394,17 @@ async function runDetect() {
 
 function setAutoBadge(kind, text) {
   const el = $('auto-badge');
+  if (!el) return;
   el.classList.remove('searching', 'found', 'failed');
   el.classList.add(kind);
-  $('auto-badge-text').textContent = text;
+  const t = $('auto-badge-text');
+  if (t) t.textContent = text;
 }
 
-// ── Build mask from all hits ────────────────────────────────────────────
-function buildMaskFromHits(hits, W, H, maxHits = 5) {
-  const mask = new Float32Array(W * H);
-  for (const hit of hits.slice(0, maxHits)) {
-    const x0 = Math.max(0, Math.round(hit.x));
-    const y0 = Math.max(0, Math.round(hit.y));
-    const x1 = Math.min(W, Math.round(hit.x + hit.width));
-    const y1 = Math.min(H, Math.round(hit.y + hit.height));
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) mask[y * W + x] = 1;
-    }
-  }
-  return mask;
-}
-
-function currentColour() {
-  const v = $('watermark-colour').value;
-  if (v === 'white') return [255, 255, 255];
-  if (v === 'black') return [0, 0, 0];
-  return null;
-}
-
-// ── Removal dispatch ────────────────────────────────────────────────────
+// ── Removal ─────────────────────────────────────────────────────────────
 async function onRemove() {
   if (!currentHits.length) return;
+  if (previewMode) exitPreview();
   if (currentKind === 'video') return onRemoveVideo();
   return onRemoveImage();
 }
@@ -377,6 +412,10 @@ async function onRemove() {
 async function onRemoveImage() {
   if (!currentImageData) return;
   ui.busy(true);
+  ui.setDownloadEnabled(false);
+  currentInpaintResult = null;
+  currentVideoResult = null;
+
   try {
     let mask = maskEditor.toMask();
     if (state.safeMode && window.__faces?.length) {
@@ -385,21 +424,24 @@ async function onRemoveImage() {
     }
     const result = await inpaintWorker.call(
       {
-        imageData: currentImageData,
-        mask,
-        model: $('model').value,
+        imageData: currentImageData, mask,
+        model: $('model')?.value ?? 'auto',
         colour: currentColour(),
-        useAlphaInvert: $('watermark-transparent').checked && !!currentHits[0]?.suggested,
-        postDenoise: $('post-denoise').checked,
-        postSharpen: $('post-sharpen').checked,
+        useAlphaInvert: ($('watermark-transparent')?.checked ?? true) && !!currentHits[0]?.suggested,
+        postDenoise: $('post-denoise')?.checked ?? true,
+        postSharpen: $('post-sharpen')?.checked ?? true,
       },
       showProgress,
     );
+
     currentInpaintResult = result;
     canvasEl.getContext('2d').putImageData(result, 0, 0);
     compareSlider.show(state.image, result);
     clearBoxes();
     ui.setDownloadEnabled(true);
+  } catch (e) {
+    console.error('Removal failed:', e);
+    alert('Removal failed: ' + (e.message || e));
   } finally {
     ui.busy(false);
     hideProgress();
@@ -408,11 +450,13 @@ async function onRemoveImage() {
 
 async function onRemoveVideo() {
   ui.busy(true);
+  ui.setDownloadEnabled(false);
+  currentVideoResult = null;
+  currentInpaintResult = null;
+
   try {
     const W = videoEl.videoWidth;
     const H = videoEl.videoHeight;
-
-    // Multi-region mask from all detected hits
     const mask = buildMaskFromHits(currentHits, W, H, 5);
     currentMask = mask;
 
@@ -422,47 +466,102 @@ async function onRemoveVideo() {
     const opts = readVideoOptions();
 
     const blob = await processVideo(videoEl, {
-      mask,
-      colour,
-      trimStart: start,
-      trimEnd: end,
+      mask, colour,
+      trimStart: start, trimEnd: end,
       targetHeight: opts.targetHeight,
       bitrate: opts.bitrate,
       preferMp4: opts.preferMp4,
       onProgress: showProgress,
     });
 
-    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = (currentFile?.name || 'video').replace(/\.[^.]+$/, '') + '_unstamped.' + ext;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    // Store the result — do NOT auto-download.
+    currentVideoResult = blob;
+    ui.setDownloadEnabled(true);
   } catch (e) {
-    console.error(e);
-    alert('Video processing failed: ' + e.message);
+    console.error('Video removal failed:', e);
+    alert('Video processing failed: ' + (e.message || e));
   } finally {
     ui.busy(false);
     hideProgress();
   }
 }
 
-function onDownload() {
-  if (!currentInpaintResult) return;
-  const c = document.createElement('canvas');
-  c.width = currentInpaintResult.width;
-  c.height = currentInpaintResult.height;
-  c.getContext('2d').putImageData(currentInpaintResult, 0, 0);
-  c.toBlob((b) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(b);
-    a.download = 'unstamped.png';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }, 'image/png');
+// ── Preview: clean one frame and save it as a result ────────────────────
+function enterPreview() {
+  if (!currentHits.length) return;
+  if (currentKind !== 'video') {
+    maskEditor.loadMaskFromHit(currentHits[0]);
+    return;
+  }
+
+  const W = videoEl.videoWidth;
+  const H = videoEl.videoHeight;
+  const mask = buildMaskFromHits(currentHits, W, H, 5);
+  const colour = currentColour();
+
+  const cleaned = previewCleanedFrame(videoEl, mask, colour);
+  canvasEl.width = W;
+  canvasEl.height = H;
+  canvasEl.style.display = '';
+  videoEl.style.display = 'none';
+  const ctx = canvasEl.getContext('2d');
+  ctx.drawImage(cleaned, 0, 0);
+
+  // Persist this preview as the current result → Download works from it
+  currentInpaintResult = ctx.getImageData(0, 0, W, H);
+  currentVideoResult = null;       // preview overrides any previous video result
+  ui.setDownloadEnabled(true);     // Download button is now active
+
+  setHidden('back-to-video', false);
+  setHidden('preview-badge', false);
+  previewMode = true;
+
+  showSuggestion(currentHits[0], 'Preview saved · click "Download result" to save this frame');
 }
 
-// ── File drop ───────────────────────────────────────────────────────────
+function exitPreview() {
+  previewMode = false;
+  setHidden('back-to-video', true);
+  setHidden('preview-badge', true);
+  canvasEl.style.display = 'none';
+  videoEl.style.display = '';
+  if (currentHits.length) {
+    drawBoxes(currentHits, videoEl.videoWidth, videoEl.videoHeight);
+    showSuggestion(currentHits[0]);
+  }
+}
+
+// ── Download ────────────────────────────────────────────────────────────
+function onDownload() {
+  // Full video result takes priority
+  if (currentVideoResult) {
+    const ext = currentVideoResult.type.includes('mp4') ? 'mp4' : 'webm';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(currentVideoResult);
+    a.download = (currentFile?.name || 'video').replace(/\.[^.]+$/, '') + '_unstamped.' + ext;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return;
+  }
+
+  // Otherwise save the image result (from image removal or video preview)
+  if (currentInpaintResult) {
+    const c = document.createElement('canvas');
+    c.width = currentInpaintResult.width;
+    c.height = currentInpaintResult.height;
+    c.getContext('2d').putImageData(currentInpaintResult, 0, 0);
+    c.toBlob((b) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      const baseName = (currentFile?.name || 'result').replace(/\.[^.]+$/, '');
+      const isVideoFrame = currentKind === 'video';
+      a.download = baseName + (isVideoFrame ? '_preview.png' : '_unstamped.png');
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }, 'image/png');
+  }
+}
+
 async function onFile(file) {
   if (!file.type) { alert('Unknown file type.'); return; }
   if (file.type.startsWith('image/')) return onImage(file);
@@ -470,7 +569,6 @@ async function onFile(file) {
   alert('Unsupported file type: ' + file.type);
 }
 
-// ── Presets ─────────────────────────────────────────────────────────────
 function onPreset(name) {
   const p = PRESETS[name];
   if (!p) return;
@@ -478,96 +576,68 @@ function onPreset(name) {
   state.preset = name;
   persist();
   ui.syncFromState();
-  $('watermark-text').value = p.watermarkText || '';
+  const input = $('watermark-text');
+  if (input) input.value = p.watermarkText || '';
   if (mode === 'auto' && p.watermarkText) setMode('manual');
 }
 
 // ── Boot ────────────────────────────────────────────────────────────────
-const ui = mountUI({ onFile, onDetect: runDetect, onRemove, onDownload, onPreset });
 const maskEditor = new MaskEditor(canvasEl, overlayEl);
 maskEditor.bind();
 const compareSlider = new CompareSlider($('compare'));
 const palette = new CommandPalette($('palette'));
+const ui = mountUI({ onFile, onDetect: runDetect, onRemove, onDownload, onPreset });
 
-// Mode buttons
-$('mode-auto').addEventListener('click', () => setMode('auto'));
-$('mode-manual').addEventListener('click', () => setMode('manual'));
+// ── Mode buttons ────────────────────────────────────────────────────────
+on('mode-auto', 'click', () => setMode('auto'));
+on('mode-manual', 'click', () => setMode('manual'));
 
-// Suggestion chip actions
-$('suggestion-accept').addEventListener('click', () => {
+// ── Suggestion chip ─────────────────────────────────────────────────────
+on('suggestion-accept', 'click', () => {
   if (currentHits[0]?.suggested) {
-    $('watermark-text').value = currentHits[0].suggested;
+    const input = $('watermark-text');
+    if (input) input.value = currentHits[0].suggested;
     state.watermarkText = currentHits[0].suggested;
     setMode('manual');
   }
   hideSuggestion();
 });
-$('suggestion-dismiss').addEventListener('click', hideSuggestion);
+on('suggestion-dismiss', 'click', hideSuggestion);
+on('suggestion-preview', 'click', enterPreview);
+on('btnPreview', 'click', enterPreview);
 
-// Preview button — clean one frame for the current mask
-$('suggestion-preview').addEventListener('click', () => {
-  if (!currentHits.length) return;
-  const W = currentKind === 'video' ? videoEl.videoWidth : canvasEl.width;
-  const H = currentKind === 'video' ? videoEl.videoHeight : canvasEl.height;
-  const mask = buildMaskFromHits(currentHits, W, H, 5);
-  const colour = currentColour();
+// ── Back-to-video button ────────────────────────────────────────────────
+on('back-to-video', 'click', exitPreview);
 
-  if (currentKind === 'video') {
-    const cleaned = previewCleanedFrame(videoEl, mask, colour);
-    canvasEl.width = W;
-    canvasEl.height = H;
-    canvasEl.style.display = '';
-    videoEl.style.display = 'none';
-    canvasEl.getContext('2d').drawImage(cleaned, 0, 0);
-    $('suggestion-text').textContent = 'Preview shown (not saved)';
-  } else {
-    // For images, just re-render the mask overlay
-    maskEditor.loadMaskFromHit(currentHits[0]);
-  }
-});
+// ── Quality / bitrate ───────────────────────────────────────────────────
+on('out-quality', 'change', applyQualityPreset);
+on('out-bitrate', 'input', updateBitrateLabel);
+applyQualityPreset();
 
-// Preview clean frame button (sidebar)
-$('btnPreview').addEventListener('click', () => {
-  if (!currentHits.length) return;
-  const W = currentKind === 'video' ? videoEl.videoWidth : canvasEl.width;
-  const H = currentKind === 'video' ? videoEl.videoHeight : canvasEl.height;
-  const mask = buildMaskFromHits(currentHits, W, H, 5);
-  const colour = currentColour();
-
-  if (currentKind === 'video') {
-    const cleaned = previewCleanedFrame(videoEl, mask, colour);
-    canvasEl.width = W;
-    canvasEl.height = H;
-    canvasEl.style.display = '';
-    videoEl.style.display = 'none';
-    canvasEl.getContext('2d').drawImage(cleaned, 0, 0);
-    $('suggestion-text').textContent = 'Preview shown (not saved)';
-    suggestionEl.hidden = false;
-  } else {
-    maskEditor.loadMaskFromHit(currentHits[0]);
-  }
-});
-
-// Trim sliders
+// ── Trim sliders ────────────────────────────────────────────────────────
 function updateTrimLabel() {
-  const s = +$('trim-start').value;
-  const e = +$('trim-end').value;
+  const s = +($('trim-start')?.value ?? 0);
+  const e = +($('trim-end')?.value ?? 0);
   const d = videoEl.duration || 1;
-  $('trim-out').textContent =
-    (s <= 0.05 && e >= d - 0.05)
+  const out = $('trim-out');
+  if (out) {
+    out.textContent = (s <= 0.05 && e >= d - 0.05)
       ? `full (${d.toFixed(1)}s)`
       : `${s.toFixed(1)}s → ${e.toFixed(1)}s`;
+  }
 }
-$('trim-start').addEventListener('input', (e) => {
-  if (+e.target.value > +$('trim-end').value) $('trim-end').value = e.target.value;
+on('trim-start', 'input', (e) => {
+  const endEl = $('trim-end');
+  if (endEl && +e.target.value > +endEl.value) endEl.value = e.target.value;
   updateTrimLabel();
 });
-$('trim-end').addEventListener('input', (e) => {
-  if (+e.target.value < +$('trim-start').value) $('trim-start').value = e.target.value;
+on('trim-end', 'input', (e) => {
+  const startEl = $('trim-start');
+  if (startEl && +e.target.value < +startEl.value) startEl.value = e.target.value;
   updateTrimLabel();
 });
 
-// Other events
+// ── Custom events ───────────────────────────────────────────────────────
 window.addEventListener('unstamp:undo', () => maskEditor.undo());
 window.addEventListener('unstamp:redo', () => maskEditor.redo());
 window.addEventListener('unstamp:clear', () => maskEditor.clear());
@@ -582,13 +652,14 @@ window.addEventListener('unstamp:pickcandidate', (e) => {
 });
 
 bindShortcuts({ onDetect: runDetect, onRemove, maskEditor, palette });
-$('btnBatch').onclick = () => runBatch(state);
+const batchBtn = $('btnBatch');
+if (batchBtn) batchBtn.onclick = () => runBatch(state);
 
 palette.register([
   { label: 'Detect watermark', hint: 'D', run: runDetect },
   { label: 'Remove watermark', hint: 'R', run: onRemove },
+  { label: 'Preview clean frame', run: enterPreview },
   { label: 'Download result', run: onDownload },
-  { label: 'Preview clean frame', run: () => $('btnPreview').click() },
   { label: 'Switch to Automatic mode', run: () => setMode('auto') },
   { label: 'Switch to Manual mode', run: () => setMode('manual') },
   { label: 'Clear mask', run: () => maskEditor.clear() },
@@ -597,15 +668,13 @@ palette.register([
   { label: 'Batch process…', run: () => runBatch(state) },
 ]);
 
-// Redraw boxes on window resize
 window.addEventListener('resize', () => {
-  if (!currentHits.length) return;
+  if (!currentHits.length || previewMode) return;
   const W = currentKind === 'video' ? videoEl.videoWidth : canvasEl.width;
   const H = currentKind === 'video' ? videoEl.videoHeight : canvasEl.height;
   drawBoxes(currentHits, W, H);
 });
 
-// Default to automatic mode
 setMode('auto');
 
 if ('serviceWorker' in navigator) {

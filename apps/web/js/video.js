@@ -4,14 +4,13 @@ import { detectGeneric } from './detect/generic.js';
 import { alphaInvert } from './inpaint/alpha-invert.js';
 import { cleanVideoWebCodecs, webCodecsSupported } from './video-clean.js';
 
-// ── Load / grab ──────────────────────────────────────────────────────────
+// ── Load / frame grab ────────────────────────────────────────────────────
 function loadVideo(video, url, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error(`Video load timed out (readyState=${video.readyState})`));
     }, timeoutMs);
-
     const cleanup = () => {
       clearTimeout(timer);
       video.removeEventListener('loadeddata', onReady);
@@ -47,15 +46,9 @@ async function grabFrame(video) {
   }
 }
 
-// ── Detect-only (drives the live preview) ───────────────────────────────
+// ── Detect-only ──────────────────────────────────────────────────────────
 export async function detectInVideo(video, opts = {}) {
-  const {
-    text = '',
-    autoDetect = true,
-    onProgress = () => {},
-    signal,
-  } = opts;
-
+  const { text = '', autoDetect = true, onProgress = () => {}, signal } = opts;
   const W = video.videoWidth;
   const H = video.videoHeight;
   const duration = video.duration;
@@ -83,25 +76,20 @@ export async function detectInVideo(video, opts = {}) {
       onProgress('detect', 0.05, 'Sampling frames…');
       hits = await detectStaticInVideo(video, {
         sampleCount: Math.min(20, Math.max(5, Math.floor(duration))),
-        onProgress: (_, pct, detail) =>
-          onProgress('detect', 0.05 + pct * 0.55, detail),
+        onProgress: (_, pct, detail) => onProgress('detect', 0.05 + pct * 0.55, detail),
         signal,
       });
       hits.forEach((h) => { h.suggested = 'static overlay'; });
     } catch (e) {
       console.warn('Static detection failed:', e);
     }
-
     if (!hits.length) {
       onProgress('detect', 0.6, 'Checking common watermarks…');
-      const common = detectCommonStrings(sampleData, {
-        onProgress: (_, pct, detail) =>
-          onProgress('detect', 0.6 + pct * 0.3, detail),
+      hits.push(...detectCommonStrings(sampleData, {
+        onProgress: (_, pct, detail) => onProgress('detect', 0.6 + pct * 0.3, detail),
         signal,
-      });
-      hits.push(...common);
+      }));
     }
-
     if (!hits.length) {
       onProgress('detect', 0.9, 'Scanning for logos…');
       hits.push(...detectGeneric(sampleData).map((h) => ({
@@ -116,7 +104,7 @@ export async function detectInVideo(video, opts = {}) {
   return hits.slice(0, 10);
 }
 
-// ── Preview: clean one frame using the current mask ─────────────────────
+// ── Preview: clean one frame ─────────────────────────────────────────────
 export function previewCleanedFrame(video, mask, colour = null) {
   const W = video.videoWidth;
   const H = video.videoHeight;
@@ -126,31 +114,25 @@ export function previewCleanedFrame(video, mask, colour = null) {
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(video, 0, 0, W, H);
   const data = ctx.getImageData(0, 0, W, H);
-  const cleaned = alphaInvert(data, mask, { colour });
-  ctx.putImageData(cleaned, 0, 0);
+  ctx.putImageData(alphaInvert(data, mask, { colour }), 0, 0);
   return c;
 }
 
 // ── Full processing ──────────────────────────────────────────────────────
 export async function processVideo(video, opts = {}) {
   const {
-    mask,
-    colour = null,
-    trimStart = 0,
-    trimEnd = null,
-    targetHeight = null,
-    bitrate = 8_000_000,
-    framerate = 30,
-    preferMp4 = true,
-    onProgress = () => {},
-    signal,
+    mask, colour = null,
+    trimStart = 0, trimEnd = null,
+    targetHeight = null, bitrate = 3_000_000,
+    framerate = 30, preferMp4 = true,
+    onProgress = () => {}, signal,
   } = opts;
 
-  // Prefer WebCodecs → real MP4, hardware-encoded
   if (preferMp4 && await webCodecsSupported()) {
     try {
       return await cleanVideoWebCodecs(video, {
-        mask, colour, trimStart, trimEnd, targetHeight, bitrate, framerate,
+        mask, colour, trimStart, trimEnd,
+        targetHeight, bitrate, framerate,
         onProgress, signal,
       });
     } catch (e) {
@@ -158,14 +140,13 @@ export async function processVideo(video, opts = {}) {
     }
   }
 
-  // Fallback: MediaRecorder → WebM (audio-preserving path)
   return processVideoMediaRecorder(video, {
-    mask, colour, onProgress, signal,
+    mask, colour, bitrate, onProgress, signal,
   });
 }
 
 async function processVideoMediaRecorder(video, opts) {
-  const { mask, colour = null, onProgress = () => {}, signal } = opts;
+  const { mask, colour = null, bitrate = 3_000_000, onProgress = () => {}, signal } = opts;
   const W = video.videoWidth;
   const H = video.videoHeight;
   const duration = video.duration;
@@ -190,7 +171,7 @@ async function processVideoMediaRecorder(video, opts) {
     ? 'video/webm;codecs=vp9,opus'
     : 'video/webm';
 
-  const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+  const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
   const chunks = [];
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   const done = new Promise((r) => { recorder.onstop = () => r(new Blob(chunks, { type: 'video/webm' })); });

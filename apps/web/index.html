@@ -99,11 +99,16 @@
 
       <label for="out-quality">Quality</label>
       <select id="out-quality">
+        <option value="480">480p — smallest</option>
+        <option value="720" selected>720p — balanced</option>
+        <option value="1080">1080p — sharp</option>
         <option value="source">Source resolution</option>
-        <option value="1080" selected>1080p</option>
-        <option value="720">720p</option>
-        <option value="480">480p</option>
       </select>
+
+      <label for="out-bitrate">
+        Bitrate <output id="bitrate-out">3 Mbps · ~22 MB/min</output>
+      </label>
+      <input id="out-bitrate" type="range" min="1" max="15" step="0.5" value="3" />
 
       <label for="trim-start">Trim <output id="trim-out">full</output></label>
       <input id="trim-start" type="range" min="0" max="100" value="0" step="0.1" />
@@ -144,6 +149,8 @@
         <video id="video" playsinline muted></video>
         <canvas id="overlay"></canvas>
         <div id="box-layer" class="box-layer" aria-hidden="true"></div>
+        <button id="back-to-video" class="back-to-video" hidden>← Back to video</button>
+        <div id="preview-badge" class="preview-badge" hidden>Preview · not saved</div>
         <div id="compare" hidden></div>
       </div>
 

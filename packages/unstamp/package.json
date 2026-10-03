@@ -4,6 +4,12 @@
   "description": "Type-safe watermark detection & removal. Browser + Node.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "sideEffects": false,
   "exports": {
     ".": {

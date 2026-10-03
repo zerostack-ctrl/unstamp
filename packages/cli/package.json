@@ -4,6 +4,9 @@
   "description": "Command-line watermark remover.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": { "unstamp": "./bin/unstamp.js" },
   "files": ["bin", "README.md"],
   "dependencies": {

@@ -139,3 +139,18 @@ body.mode-manual .auto-badge{display:none}
   justify-content:space-between;font-size:13px}
 .palette li.active{background:var(--accent);color:#0b0d10}
 .palette li span{color:var(--fg-mute);font-size:11px}
+/* ── AI fields ───────────────────────────────────────────────────────── */
+#ai-fields{display:none}
+body.mode-ai #ai-fields{display:block}
+body.mode-ai #manual-fields{display:none}
+body.mode-ai .auto-badge{display:flex}
+
+.ai-hint{
+  font-size:11px;
+  color:var(--fg-mute);
+  line-height:1.5;
+  margin:8px 0 0;
+}
+.ai-hint em{color:var(--fg-dim);font-style:normal}
+.mode-btn.ai{color:var(--accent)}
+.mode-btn.ai.active{background:var(--accent);color:#0b0d10

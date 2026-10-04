@@ -9,8 +9,18 @@ import { bindShortcuts } from './shortcuts.js';
 import { runBatch } from './batch.js';
 import { detectFaces, carveOut } from './safe-mode.js';
 import { loadVideo, grabFrame, detectInVideo, processVideo, previewCleanedFrame } from './video.js';
+import { aiDetect, isAISupported, warmUpAI } from './ai.js';
 
 loadPersisted();
+
+// ── Size limits ──────────────────────────────────────────────────────────
+const LIMITS = {
+  imageFileMB: 100,       // reject images over this size
+  videoFileMB: 500,       // reject videos over this size
+  videoMinutes: 10,       // warn about videos over this length
+  imageMaxSide: 4096,     // downscale images bigger than this for processing
+  videoMaxSide: 1920,     // downscale video output to this max width
+};
 
 // ── DOM refs ─────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
@@ -48,11 +58,10 @@ let currentImageData = null;
 let currentVideoUrl = null;
 let currentHits = [];
 let currentMask = null;
-let currentInpaintResult = null;   // ImageData — from image removal OR video preview
-let currentVideoResult = null;     // Blob — from full video processing
+let currentInpaintResult = null;   // ImageData — only set by full removal
+let currentVideoResult = null;     // Blob — only set by full video removal
 let previewMode = false;
 
-// ── Reset download state on every new file ──────────────────────────────
 function resetDownloadState() {
   currentInpaintResult = null;
   currentVideoResult = null;
@@ -71,6 +80,7 @@ function showProgress(phase, pct, detail = '') {
       inpaint: 'Inpainting',
       postprocess: 'Post-processing',
       video: 'Video',
+      ai: 'AI',
     }[phase] || phase;
     progressLabel.innerHTML =
       `<span class="phase">${phaseName}</span>` +
@@ -135,6 +145,10 @@ function drawBoxes(hits, imageWidth, imageHeight) {
     div.style.top = (offY + h.y * sy) + 'px';
     div.style.width = (h.width * sx) + 'px';
     div.style.height = (h.height * sy) + 'px';
+    if (h.region === 'ai') {
+      div.style.borderColor = '#22d3ee';
+      div.style.background = 'rgba(34,211,238,.08)';
+    }
     boxLayer.appendChild(div);
   });
 }
@@ -159,6 +173,7 @@ function readVideoOptions() {
     targetHeight: quality === 'source' ? null : +quality,
     bitrate: Math.round(bitrateMbps * 1_000_000),
     preferMp4: ($('out-format')?.value ?? 'mp4') === 'mp4',
+    maxSide: LIMITS.videoMaxSide,
   };
 }
 
@@ -213,11 +228,29 @@ function buildMaskFromHits(hits, W, H, maxHits = 5) {
 function setMode(next) {
   mode = next;
   document.body.classList.toggle('mode-auto', next === 'auto');
+  document.body.classList.toggle('mode-ai', next === 'ai');
   document.body.classList.toggle('mode-manual', next === 'manual');
   $('mode-auto')?.classList.toggle('active', next === 'auto');
+  $('mode-ai')?.classList.toggle('active', next === 'ai');
   $('mode-manual')?.classList.toggle('active', next === 'manual');
   $('mode-auto')?.setAttribute('aria-selected', next === 'auto');
+  $('mode-ai')?.setAttribute('aria-selected', next === 'ai');
   $('mode-manual')?.setAttribute('aria-selected', next === 'manual');
+
+  const hint = $('mode-hint');
+  if (hint) {
+    hint.innerHTML = next === 'ai'
+      ? 'AI mode understands natural language. Describe the watermark — <em>"the logo in the corner"</em>, <em>"@channel"</em>, <em>"TikTok badge"</em>.'
+      : next === 'manual'
+        ? 'Type the exact watermark text. Best for known watermarks like <code>Gemini</code>, <code>Sora</code>, or <code>DALL·E</code>.'
+        : 'Detects common watermarks automatically — <code>@username</code>, <code>subscribe</code>, links, and anything static across video frames.';
+  }
+
+  if (next === 'ai' && !isAISupported()) {
+    setAutoBadge('failed', 'AI not supported in this browser');
+  } else if (next === 'ai') {
+    warmUpAI();
+  }
   if (next === 'manual') {
     state.watermarkText = $('watermark-text')?.value || state.watermarkText;
   } else {
@@ -225,8 +258,25 @@ function setMode(next) {
   }
 }
 
-// ── Image handling ──────────────────────────────────────────────────────
-function downscaleForDetection(imageData, maxSide = 2048) {
+// ── Size guards ─────────────────────────────────────────────────────────
+function checkFileSize(file, kind) {
+  const mb = file.size / (1024 * 1024);
+  const maxMB = kind === 'video' ? LIMITS.videoFileMB : LIMITS.imageFileMB;
+
+  if (mb > maxMB) {
+    const ok = confirm(
+      `This ${kind} is ${mb.toFixed(0)} MB — larger than the recommended ${maxMB} MB.\n\n` +
+      `Processing very large files may crash the browser tab.\n\nContinue anyway?`,
+    );
+    if (!ok) return false;
+  } else if (mb > maxMB * 0.6) {
+    // soft warning for 60–100% of the limit
+    setAutoBadge('searching', `${kind} is ${mb.toFixed(0)} MB — this may take a while`);
+  }
+  return true;
+}
+
+function downscaleForDetection(imageData, maxSide) {
   const { width: W, height: H } = imageData;
   const scale = Math.min(1, maxSide / Math.max(W, H));
   if (scale >= 0.95) return { imageData, scale: 1 };
@@ -250,9 +300,12 @@ function upscaleHits(hits, scale) {
   }));
 }
 
+// ── Image handling ──────────────────────────────────────────────────────
 async function onImage(file) {
   currentKind = 'image';
   currentFile = file;
+
+  if (!checkFileSize(file, 'image')) return;
 
   if (state.stripMetadata) {
     try { file = await stripMetadata(file); } catch (e) { console.warn(e); }
@@ -260,16 +313,28 @@ async function onImage(file) {
   const bitmap = await createImageBitmap(file);
   state.setImage(bitmap);
 
+  // Show canvas, hide video
   canvasEl.style.display = '';
   videoEl.style.display = 'none';
   try { videoEl.pause(); } catch {}
 
-  canvasEl.width = bitmap.width;
-  canvasEl.height = bitmap.height;
-  canvasEl.getContext('2d').drawImage(bitmap, 0, 0);
-  currentImageData = canvasEl.getContext('2d').getImageData(0, 0, bitmap.width, bitmap.height);
+  // Downscale for display if the source is enormous — keeps memory sane
+  const maxSide = LIMITS.imageMaxSide;
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const dispW = Math.round(bitmap.width * scale);
+  const dispH = Math.round(bitmap.height * scale);
 
-  maskEditor.reset(bitmap.width, bitmap.height);
+  canvasEl.width = dispW;
+  canvasEl.height = dispH;
+  canvasEl.getContext('2d').drawImage(bitmap, 0, 0, dispW, dispH);
+  currentImageData = canvasEl.getContext('2d').getImageData(0, 0, dispW, dispH);
+
+  if (scale < 0.95) {
+    setAutoBadge('searching',
+      `Downscaled ${bitmap.width}×${bitmap.height} → ${dispW}×${dispH} for processing`);
+  }
+
+  maskEditor.reset(dispW, dispH);
   overlayEl.style.pointerEvents = 'auto';
 
   ui.showStage();
@@ -289,6 +354,8 @@ async function onImage(file) {
 async function onVideo(file) {
   currentKind = 'video';
   currentFile = file;
+
+  if (!checkFileSize(file, 'video')) return;
 
   if (currentVideoUrl) URL.revokeObjectURL(currentVideoUrl);
   currentVideoUrl = URL.createObjectURL(file);
@@ -312,6 +379,19 @@ async function onVideo(file) {
   try {
     await loadVideo(videoEl, currentVideoUrl, 30000);
 
+    // Duration warning
+    if (videoEl.duration > LIMITS.videoMinutes * 60) {
+      const mins = (videoEl.duration / 60).toFixed(1);
+      setAutoBadge('searching',
+        `${mins} min video — consider trimming to speed things up`);
+    }
+
+    // Resolution cap for processing
+    if (videoEl.videoWidth > LIMITS.videoMaxSide) {
+      setAutoBadge('searching',
+        `Video is ${videoEl.videoWidth}px wide — output will be capped at ${LIMITS.videoMaxSide}px`);
+    }
+
     const ts = $('trim-start'), te = $('trim-end'), to = $('trim-out');
     if (ts) { ts.min = 0; ts.max = videoEl.duration; ts.value = 0; }
     if (te) { te.min = 0; te.max = videoEl.duration; te.value = videoEl.duration; }
@@ -329,33 +409,20 @@ async function onVideo(file) {
   }
 }
 
-// ── Detection ───────────────────────────────────────────────────────────
+// ── Detection dispatcher ────────────────────────────────────────────────
 async function runDetect() {
   const isVideo = currentKind === 'video';
-  const isAuto = mode === 'auto';
-  const text = isAuto ? '' : ($('watermark-text')?.value || '').trim();
 
   ui.busy(true);
-  setAutoBadge('searching', isVideo ? 'Scanning video…' : 'Scanning image…');
+  const label = mode === 'ai' ? 'AI scanning…' : (isVideo ? 'Scanning video…' : 'Scanning image…');
+  setAutoBadge('searching', label);
+
   try {
     let hits = [];
-    if (isVideo) {
-      hits = await detectInVideo(videoEl, {
-        text, autoDetect: isAuto, onProgress: showProgress,
-      });
+    if (mode === 'ai') {
+      hits = await runAIDetection();
     } else {
-      const { imageData: small, scale } = downscaleForDetection(currentImageData, 2048);
-      const hitsSmall = await detectWorker.call(
-        {
-          imageData: small, text, autoDetect: isAuto,
-          angleAuto: $('watermark-angle-auto')?.checked ?? true,
-          angle: +($('watermark-angle')?.value ?? 0),
-          tiled: $('watermark-tiled')?.checked ?? false,
-          outline: $('watermark-outline')?.checked ?? false,
-        },
-        showProgress,
-      );
-      hits = upscaleHits(hitsSmall, scale);
+      hits = await runClassicDetection(isVideo);
     }
 
     currentHits = hits;
@@ -378,10 +445,9 @@ async function runDetect() {
     drawBoxes(hits, W, H);
     ui.renderCandidates(hits);
 
-    if (!isVideo) maskEditor.loadMaskFromHit(hits[0]);
+    if (!isVideo && hits[0]) maskEditor.loadMaskFromHit(hits[0]);
     setDisabled('btnRemove', false);
     setDisabled('btnPreview', false);
-    // Download stays disabled — must remove or preview first
     ui.setDownloadEnabled(false);
   } catch (e) {
     console.error(e);
@@ -390,6 +456,50 @@ async function runDetect() {
     ui.busy(false);
     hideProgress();
   }
+}
+
+async function runClassicDetection(isVideo) {
+  const isAuto = mode === 'auto';
+  const text = isAuto ? '' : ($('watermark-text')?.value || '').trim();
+
+  if (isVideo) {
+    return detectInVideo(videoEl, { text, autoDetect: isAuto, onProgress: showProgress });
+  }
+
+  const { imageData: small, scale } = downscaleForDetection(currentImageData, 2048);
+  const hitsSmall = await detectWorker.call(
+    {
+      imageData: small, text, autoDetect: isAuto,
+      angleAuto: $('watermark-angle-auto')?.checked ?? true,
+      angle: +($('watermark-angle')?.value ?? 0),
+      tiled: $('watermark-tiled')?.checked ?? false,
+      outline: $('watermark-outline')?.checked ?? false,
+    },
+    showProgress,
+  );
+  return upscaleHits(hitsSmall, scale);
+}
+
+async function runAIDetection() {
+  if (!isAISupported()) throw new Error('AI not supported in this browser');
+
+  const userPrompt = ($('ai-prompt')?.value || '').trim();
+  const prompts = userPrompt
+    ? userPrompt.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined;
+
+  let source;
+  if (currentKind === 'video') {
+    const c = document.createElement('canvas');
+    c.width = videoEl.videoWidth;
+    c.height = videoEl.videoHeight;
+    c.getContext('2d').drawImage(videoEl, 0, 0);
+    source = c;
+  } else {
+    source = canvasEl;
+  }
+
+  return aiDetect(source, prompts, { onProgress: showProgress, threshold: 0.08 });
 }
 
 function setAutoBadge(kind, text) {
@@ -471,10 +581,10 @@ async function onRemoveVideo() {
       targetHeight: opts.targetHeight,
       bitrate: opts.bitrate,
       preferMp4: opts.preferMp4,
+      maxSide: opts.maxSide,
       onProgress: showProgress,
     });
 
-    // Store the result — do NOT auto-download.
     currentVideoResult = blob;
     ui.setDownloadEnabled(true);
   } catch (e) {
@@ -486,9 +596,11 @@ async function onRemoveVideo() {
   }
 }
 
-// ── Preview: clean one frame and save it as a result ────────────────────
+// ── Preview (NOT saved) ─────────────────────────────────────────────────
 function enterPreview() {
   if (!currentHits.length) return;
+
+  // For images: preview is just the mask overlay
   if (currentKind !== 'video') {
     maskEditor.loadMaskFromHit(currentHits[0]);
     return;
@@ -499,24 +611,26 @@ function enterPreview() {
   const mask = buildMaskFromHits(currentHits, W, H, 5);
   const colour = currentColour();
 
+  // Render a cleaned frame on the canvas — purely visual
   const cleaned = previewCleanedFrame(videoEl, mask, colour);
   canvasEl.width = W;
   canvasEl.height = H;
   canvasEl.style.display = '';
   videoEl.style.display = 'none';
-  const ctx = canvasEl.getContext('2d');
-  ctx.drawImage(cleaned, 0, 0);
+  canvasEl.getContext('2d').drawImage(cleaned, 0, 0);
 
-  // Persist this preview as the current result → Download works from it
-  currentInpaintResult = ctx.getImageData(0, 0, W, H);
-  currentVideoResult = null;       // preview overrides any previous video result
-  ui.setDownloadEnabled(true);     // Download button is now active
+  // Do NOT store as a result. Do NOT enable download.
+  currentInpaintResult = null;
+  currentVideoResult = null;
+  ui.setDownloadEnabled(false);
 
   setHidden('back-to-video', false);
   setHidden('preview-badge', false);
+  const badge = $('preview-badge');
+  if (badge) badge.textContent = 'Preview · not saved';
   previewMode = true;
 
-  showSuggestion(currentHits[0], 'Preview saved · click "Download result" to save this frame');
+  showSuggestion(currentHits[0], 'Preview (not saved) — click "Remove watermark" to process the full video');
 }
 
 function exitPreview() {
@@ -533,7 +647,6 @@ function exitPreview() {
 
 // ── Download ────────────────────────────────────────────────────────────
 function onDownload() {
-  // Full video result takes priority
   if (currentVideoResult) {
     const ext = currentVideoResult.type.includes('mp4') ? 'mp4' : 'webm';
     const a = document.createElement('a');
@@ -544,7 +657,6 @@ function onDownload() {
     return;
   }
 
-  // Otherwise save the image result (from image removal or video preview)
   if (currentInpaintResult) {
     const c = document.createElement('canvas');
     c.width = currentInpaintResult.width;
@@ -554,8 +666,7 @@ function onDownload() {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(b);
       const baseName = (currentFile?.name || 'result').replace(/\.[^.]+$/, '');
-      const isVideoFrame = currentKind === 'video';
-      a.download = baseName + (isVideoFrame ? '_preview.png' : '_unstamped.png');
+      a.download = baseName + '_unstamped.png';
       a.click();
       URL.revokeObjectURL(a.href);
     }, 'image/png');
@@ -588,11 +699,10 @@ const compareSlider = new CompareSlider($('compare'));
 const palette = new CommandPalette($('palette'));
 const ui = mountUI({ onFile, onDetect: runDetect, onRemove, onDownload, onPreset });
 
-// ── Mode buttons ────────────────────────────────────────────────────────
 on('mode-auto', 'click', () => setMode('auto'));
+on('mode-ai', 'click', () => setMode('ai'));
 on('mode-manual', 'click', () => setMode('manual'));
 
-// ── Suggestion chip ─────────────────────────────────────────────────────
 on('suggestion-accept', 'click', () => {
   if (currentHits[0]?.suggested) {
     const input = $('watermark-text');
@@ -605,16 +715,12 @@ on('suggestion-accept', 'click', () => {
 on('suggestion-dismiss', 'click', hideSuggestion);
 on('suggestion-preview', 'click', enterPreview);
 on('btnPreview', 'click', enterPreview);
-
-// ── Back-to-video button ────────────────────────────────────────────────
 on('back-to-video', 'click', exitPreview);
 
-// ── Quality / bitrate ───────────────────────────────────────────────────
 on('out-quality', 'change', applyQualityPreset);
 on('out-bitrate', 'input', updateBitrateLabel);
 applyQualityPreset();
 
-// ── Trim sliders ────────────────────────────────────────────────────────
 function updateTrimLabel() {
   const s = +($('trim-start')?.value ?? 0);
   const e = +($('trim-end')?.value ?? 0);
@@ -637,7 +743,6 @@ on('trim-end', 'input', (e) => {
   updateTrimLabel();
 });
 
-// ── Custom events ───────────────────────────────────────────────────────
 window.addEventListener('unstamp:undo', () => maskEditor.undo());
 window.addEventListener('unstamp:redo', () => maskEditor.redo());
 window.addEventListener('unstamp:clear', () => maskEditor.clear());
@@ -661,6 +766,7 @@ palette.register([
   { label: 'Preview clean frame', run: enterPreview },
   { label: 'Download result', run: onDownload },
   { label: 'Switch to Automatic mode', run: () => setMode('auto') },
+  { label: 'Switch to AI mode', run: () => setMode('ai') },
   { label: 'Switch to Manual mode', run: () => setMode('manual') },
   { label: 'Clear mask', run: () => maskEditor.clear() },
   { label: 'Undo', hint: 'Ctrl+Z', run: () => maskEditor.undo() },

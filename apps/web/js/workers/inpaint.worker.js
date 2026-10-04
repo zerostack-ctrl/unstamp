@@ -1,21 +1,60 @@
 import { alphaInvert } from '../inpaint/alpha-invert.js';
 import { frequencyNotch } from '../inpaint/notch.js';
 import { denoise, sharpen } from '../inpaint/postprocess.js';
+import { aiInpaint, probeModels } from '../ai-inpaint.js';
 
 self.onmessage = async (e) => {
   const { id, payload } = e.data;
+
+  const emit = (phase, pct, detail) => {
+    self.postMessage({ id, type: 'progress', phase, pct, detail });
+  };
+
   try {
     let out = payload.imageData;
-    if (payload.useNotch && payload.peaks?.length) out = frequencyNotch(out, payload.peaks);
+
+    if (payload.useNotch && payload.peaks?.length) {
+      emit('inpaint', 0.05, 'Applying frequency notch');
+      out = frequencyNotch(out, payload.peaks);
+    }
+
+    const wantsAI = !payload.useAlphaInvert && payload.model !== 'alpha';
+    const models = wantsAI ? await probeModels() : { migan: false, lama: false };
+    const aiAvailable = models.migan || models.lama;
 
     if (payload.useAlphaInvert) {
+      emit('inpaint', 0.3, 'Alpha inversion');
       out = alphaInvert(out, payload.mask, { colour: payload.colour ?? undefined });
+      emit('inpaint', 0.9, 'Alpha inversion done');
+    } else if (aiAvailable) {
+      emit('inpaint', 0.1, 'AI inpainting…');
+      try {
+        out = await aiInpaint(out, payload.mask, {
+          model: payload.model === 'migan' && !models.migan
+               ? 'lama'
+               : payload.model === 'lama' && !models.lama
+                 ? 'migan'
+                 : payload.model,
+          onProgress: emit,
+        });
+      } catch (err) {
+        console.warn('AI inpaint failed, using blur fallback:', err);
+        emit('inpaint', 0.5, 'Falling back to fast inpaint');
+        out = fastBlurInpaint(out, payload.mask);
+      }
     } else {
+      emit('inpaint', 0.3, 'Fast inpaint (models not found)');
       out = fastBlurInpaint(out, payload.mask);
     }
 
-    if (payload.postDenoise) out = denoise(out, 0.3);
-    if (payload.postSharpen) out = sharpen(out, 0.4);
+    if (payload.postDenoise) {
+      emit('inpaint', 0.92, 'Denoising');
+      out = denoise(out, 0.3);
+    }
+    if (payload.postSharpen) {
+      emit('inpaint', 0.96, 'Sharpening');
+      out = sharpen(out, 0.4);
+    }
 
     self.postMessage({ id, ok: true, result: out }, [out.data.buffer]);
   } catch (err) {
@@ -23,6 +62,7 @@ self.onmessage = async (e) => {
   }
 };
 
+// Placeholder inpainting: nearest-neighbour fill from unmasked neighbours.
 function fastBlurInpaint(imageData, mask) {
   const { data, width: W, height: H } = imageData;
   const out = new ImageData(new Uint8ClampedArray(data), W, H);

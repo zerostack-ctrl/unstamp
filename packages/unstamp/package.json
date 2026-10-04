@@ -1,6 +1,6 @@
 {
   "name": "@zerostack-labc/unstamp",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Type-safe watermark detection & removal. Browser + Node.",
   "type": "module",
   "license": "MIT",
